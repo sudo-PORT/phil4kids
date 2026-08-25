@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   packages: read
   issues: write
@@ -17,11 +18,19 @@ concurrency:
 jobs:
   security:
     name: Weekly full scan
-    uses: sudo-PORT/.github/.github/workflows/node-ci.yml@89bb4b85b117bd266c9e8feb5e7c931cb3a44c1a
+    uses: sudo-PORT/.github/.github/workflows/node-ci.yml@3c0e63976ba46cb4220b11788fd6004e3c00d02f
     with:
       quality-enabled: false
       gitleaks-enabled: true
       semgrep-enabled: true
       trivy-enabled: true
       security-enforce: false
-      security-issues-enabled: true
+
+  triage:
+    name: Weekly issue triage
+    if: always()
+    needs: security
+    uses: sudo-PORT/.github/.github/workflows/security-triage.yml@3c0e63976ba46cb4220b11788fd6004e3c00d02f
+    with:
+      security-result: ${{ needs.security.result }}
+      security-enforce: false
