@@ -1,3 +1,30 @@
+<!-- BEGIN SUDOPORT PROJECT PROFILE -->
+<div align="center">
+
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/sudo-port-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/sudo-port-logo-light.svg">
+    <img src=".github/assets/sudo-port-logo-light.svg" alt="sudo/PORT" width="280">
+  </picture>
+
+  <br><br>
+
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/project-profile-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/project-profile-light.svg">
+    <img src=".github/assets/project-profile-light.svg" alt="Phil4Kids: Webauftritt für Kindermusik, Bewegung und spielerische Gesundheitsförderung." width="100%">
+  </picture>
+
+  <p>
+    <strong>Webauftritt für Kindermusik, Bewegung und spielerische Gesundheitsförderung.</strong><br>
+    <sub>Kundenprojekt · Webauftritt in Entwicklung · Ein Projekt von <a href="https://sudoport.de">sudo/PORT</a></sub>
+  </p>
+
+  <p><a href="PROJECT.md"><strong>Projektseite öffnen →</strong></a></p>
+
+</div>
+<!-- END SUDOPORT PROJECT PROFILE -->
+
 <div align="center">
 
 # 🎵 Phil4Kids
