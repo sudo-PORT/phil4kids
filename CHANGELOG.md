@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- sudoport-project-page-2026-08-23 -->
+## 2026-08-23 — Projektseite
+
+- eigenständige GitHub-Projektseite für Phil4Kids ergänzt
+- Zweck, Zielgruppe, Funktionsschwerpunkte, Status und Repository-Grenze dokumentiert
+- Projektseite aus dem README-Kopf verlinkt
+
 <!-- sudo-security-rollout-2026-08-25 -->
 ## 2026-08-25 – Wöchentliche Security-Automation
 
