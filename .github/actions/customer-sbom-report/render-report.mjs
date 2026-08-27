@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 
 const requiredEnvironment = [
   "CUSTOMER_REPORT_SBOM_PATH",
+  "CUSTOMER_REPORT_SPDX_PATH",
   "CUSTOMER_REPORT_TRIVY_PATH",
   "CUSTOMER_REPORT_OUTPUT_DIRECTORY",
   "CUSTOMER_REPORT_PROJECT_NAME",
@@ -26,11 +27,12 @@ for (const name of requiredEnvironment) {
 
 const paths = {
   sbom: resolve(process.env.CUSTOMER_REPORT_SBOM_PATH),
+  spdx: resolve(process.env.CUSTOMER_REPORT_SPDX_PATH),
   trivy: resolve(process.env.CUSTOMER_REPORT_TRIVY_PATH),
   output: resolve(process.env.CUSTOMER_REPORT_OUTPUT_DIRECTORY),
   logo: resolve(process.env.CUSTOMER_REPORT_LOGO_PATH),
 };
-for (const [label, path] of Object.entries({ sbom: paths.sbom, trivy: paths.trivy, logo: paths.logo })) {
+for (const [label, path] of Object.entries({ sbom: paths.sbom, spdx: paths.spdx, trivy: paths.trivy, logo: paths.logo })) {
   if (!existsSync(path)) {
     throw new Error(`${label} input not found: ${path}`);
   }
@@ -47,9 +49,13 @@ const escapeHtml = (value) =>
     .replaceAll("'", "&#039;");
 
 const sbom = readJson(paths.sbom);
+const spdx = readJson(paths.spdx);
 const trivy = readJson(paths.trivy);
 if (sbom.bomFormat !== "CycloneDX" || typeof sbom.specVersion !== "string") {
   throw new Error("The customer report requires a valid CycloneDX JSON document");
+}
+if (spdx.spdxVersion !== "SPDX-2.3" || spdx.dataLicense !== "CC0-1.0") {
+  throw new Error("The customer report requires a valid SPDX 2.3 JSON document");
 }
 
 const components = Array.isArray(sbom.components) ? sbom.components : [];
@@ -97,6 +103,7 @@ const manufacturerUrl = process.env.CUSTOMER_REPORT_MANUFACTURER_URL;
 const securityContact = process.env.CUSTOMER_REPORT_SECURITY_CONTACT;
 const classification = process.env.CUSTOMER_REPORT_CLASSIFICATION;
 const sbomDigest = sha256(paths.sbom);
+const spdxDigest = sha256(paths.spdx);
 const trivyDigest = sha256(paths.trivy);
 const serialNumber = sbom.serialNumber || "nicht vergeben";
 const logoSvg = readFileSync(paths.logo, "utf8").replace(/<\?xml[^>]*>/u, "");
@@ -479,9 +486,10 @@ const html = `<!doctype html>
       <div><dt>Version</dt><dd>${escapeHtml(version)}</dd></div>
       <div><dt>Quell-Commit</dt><dd>${escapeHtml(sourceSha)}</dd></div>
       <div><dt>Repository</dt><dd>${escapeHtml(repositoryUrl)}</dd></div>
-      <div><dt>SBOM-Format</dt><dd>CycloneDX JSON ${escapeHtml(sbom.specVersion)}</dd></div>
+      <div><dt>SBOM-Formate</dt><dd>CycloneDX JSON ${escapeHtml(sbom.specVersion)} · SPDX JSON 2.3</dd></div>
       <div><dt>SBOM-Seriennummer</dt><dd>${escapeHtml(serialNumber)}</dd></div>
       <div><dt>SBOM SHA-256</dt><dd>${escapeHtml(sbomDigest)}</dd></div>
+      <div><dt>SPDX SHA-256</dt><dd>${escapeHtml(spdxDigest)}</dd></div>
       <div><dt>Scan-Nachweis SHA-256</dt><dd>${escapeHtml(trivyDigest)}</dd></div>
       <div><dt>Erstellungszeitpunkt</dt><dd>${escapeHtml(generatedAt)}</dd></div>
     </dl>
@@ -492,7 +500,7 @@ const html = `<!doctype html>
       <tbody>${ecosystemRows}</tbody>
     </table>
 
-    <div class="callout"><strong>Verifikation:</strong> Die Datei SHA256SUMS gegen die beigefügte sbom.cdx.json prüfen. Eine vorhandene Sigstore-Attestierung bestätigt zusätzlich die Herkunft über den freigegebenen GitHub-Workflow.</div>
+    <div class="callout"><strong>Verifikation:</strong> Die Datei SHA256SUMS gegen die beigefügten Dateien sbom.cdx.json und sbom.spdx.json prüfen. Eine vorhandene Sigstore-Attestierung bestätigt zusätzlich die Herkunft über den freigegebenen GitHub-Workflow.</div>
     <footer class="footer"><span>${escapeHtml(manufacturer)} · Software Transparency Report</span><span>Seite 3</span></footer>
   </section>
 
@@ -507,7 +515,7 @@ const html = `<!doctype html>
     <ol class="steps">
       <li><div><strong>Dokumentidentität prüfen</strong><br>Produkt, Version und Commit mit Release Notes beziehungsweise Liefergegenstand abgleichen.</div></li>
       <li><div><strong>Integrität bestätigen</strong><br>SHA-256-Prüfsummen prüfen und, sofern beigefügt, die Sigstore-Attestierung verifizieren.</div></li>
-      <li><div><strong>SBOM importieren</strong><br>sbom.cdx.json in ein CycloneDX-kompatibles Asset-, GRC- oder Schwachstellenmanagement übernehmen.</div></li>
+      <li><div><strong>SBOM importieren</strong><br>sbom.cdx.json für CycloneDX-Systeme oder sbom.spdx.json für SPDX-kompatible Asset-, GRC- und Lizenzwerkzeuge übernehmen.</div></li>
       <li><div><strong>Aktualisierungen verfolgen</strong><br>Security Advisories, VEX-Entscheidungen und neue Produkt-Releases während des vereinbarten Supportzeitraums berücksichtigen.</div></li>
       <li><div><strong>Schwachstellen vertraulich melden</strong><br>Keine sensiblen Details in öffentliche Issues einstellen, sondern den unten genannten Security-Kontakt verwenden.</div></li>
     </ol>
@@ -519,6 +527,7 @@ const html = `<!doctype html>
         <tr><td>customer-security-report.pdf</td><td>Lesbarer Kunden- und Auditbericht</td></tr>
         <tr><td>customer-security-report.html</td><td>Barrierearme digitale Berichtsfassung</td></tr>
         <tr><td>sbom.cdx.json</td><td>Maschinenlesbare CycloneDX-SBOM</td></tr>
+        <tr><td>sbom.spdx.json</td><td>Interoperable SPDX-2.3-SBOM</td></tr>
         <tr><td>SHA256SUMS</td><td>Integritätsprüfung der SBOM</td></tr>
         <tr><td>customer-package.json</td><td>Metadaten und Prüfsummen des Kundenpakets</td></tr>
       </tbody>
@@ -589,6 +598,7 @@ const manifest = {
   },
   evidence: {
     sbom: { format: "CycloneDX JSON", specVersion: sbom.specVersion, sha256: sbomDigest },
+    spdx: { format: "SPDX JSON", specVersion: spdx.spdxVersion, sha256: spdxDigest },
     vulnerabilityScan: { tool: "Trivy", sha256: trivyDigest },
     htmlReport: { file: "customer-security-report.html", sha256: sha256(htmlPath) },
     ...(existsSync(pdfPath)
@@ -606,7 +616,7 @@ Source commit: ${sourceSha}
 Document ID: ${documentId}
 Generated: ${generatedAt}
 
-Start with customer-security-report.pdf. Verify sbom.cdx.json using SHA256SUMS.
+Start with customer-security-report.pdf. Verify sbom.cdx.json and sbom.spdx.json using SHA256SUMS.
 Report security concerns confidentially to ${securityContact}.
 `;
 writeFileSync(resolve(paths.output, "CUSTOMER-README.txt"), readme, { mode: 0o644 });

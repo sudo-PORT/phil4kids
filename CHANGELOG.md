@@ -1,5 +1,20 @@
 # Changelog
 
+<!-- cra-evidence-gate-2026-08-27 -->
+## 2026-08-27 – Verbindliches CRA-Evidenz-Gate
+
+- Den im oeffentlichen Repository vendorten SBOM-Workflow auf den qualifizierten
+  Zentralstand `3563a31df3d53e66de2d8245b04e179a315cb720` aktualisiert und fuer
+  Pull Requests sowie jeden freigegebenen `main`-Stand aktiviert.
+- Dependency-Track-Upload und Sigstore-Attestierung sind fuer Release-Staende
+  verpflichtend; vorhandene Produktionsdeployments starten erst nach dem
+  erfolgreichen, commitgebundenen CRA-Gate.
+- Der woechentliche Secret-, SAST- und Schwachstellenscan laeuft fail-closed;
+  Befunde erzeugen oder aktualisieren automatisch den zentralen Security-
+  Arbeitsauftrag und werden erst nach einem sauberen Lauf geschlossen.
+- Das gebrandete Kundenpaket enthaelt nun sowohl CycloneDX JSON 1.6 als auch
+  SPDX JSON 2.3 samt gemeinsamer Commitbindung und SHA-256-Nachweisen.
+
 <!-- cra-sbom-public-workflow-2026-08-27 -->
 ## 2026-08-27 – Öffentlicher CRA-SBOM-Workflow
 
