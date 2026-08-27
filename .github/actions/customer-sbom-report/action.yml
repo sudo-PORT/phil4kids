@@ -1,0 +1,74 @@
+name: sudoPORT customer SBOM report
+description: Renders a branded customer-facing SBOM assurance report as HTML and PDF
+
+inputs:
+  sbom-path:
+    description: Path to the CycloneDX JSON SBOM
+    required: true
+  trivy-path:
+    description: Path to the Trivy JSON evidence
+    required: true
+  output-directory:
+    description: Directory receiving the customer report
+    required: false
+    default: cra-sbom/customer
+  project-name:
+    description: Customer-facing product name
+    required: true
+  release-version:
+    description: Customer-facing release version
+    required: true
+  source-sha:
+    description: Exact inventoried Git commit
+    required: true
+  repository-url:
+    description: Source repository URL recorded in the evidence
+    required: true
+  manufacturer-name:
+    description: Manufacturer name printed in the report
+    required: false
+    default: sudo/PORT
+  manufacturer-url:
+    description: Manufacturer website
+    required: false
+    default: https://sudoport.de
+  security-contact:
+    description: Coordinated disclosure contact
+    required: false
+    default: security@sudoport.de
+  classification:
+    description: Document classification
+    required: false
+    default: Vertraulich – für Kunden und Prüfer
+
+outputs:
+  html-path:
+    description: Generated HTML report
+    value: ${{ steps.render.outputs.html-path }}
+  pdf-path:
+    description: Generated PDF report
+    value: ${{ steps.render.outputs.pdf-path }}
+  manifest-path:
+    description: Generated customer package manifest
+    value: ${{ steps.render.outputs.manifest-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Render branded customer assurance report
+      id: render
+      shell: bash
+      env:
+        CUSTOMER_REPORT_SBOM_PATH: ${{ inputs.sbom-path }}
+        CUSTOMER_REPORT_TRIVY_PATH: ${{ inputs.trivy-path }}
+        CUSTOMER_REPORT_OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
+        CUSTOMER_REPORT_PROJECT_NAME: ${{ inputs.project-name }}
+        CUSTOMER_REPORT_RELEASE_VERSION: ${{ inputs.release-version }}
+        CUSTOMER_REPORT_SOURCE_SHA: ${{ inputs.source-sha }}
+        CUSTOMER_REPORT_REPOSITORY_URL: ${{ inputs.repository-url }}
+        CUSTOMER_REPORT_MANUFACTURER_NAME: ${{ inputs.manufacturer-name }}
+        CUSTOMER_REPORT_MANUFACTURER_URL: ${{ inputs.manufacturer-url }}
+        CUSTOMER_REPORT_SECURITY_CONTACT: ${{ inputs.security-contact }}
+        CUSTOMER_REPORT_CLASSIFICATION: ${{ inputs.classification }}
+        CUSTOMER_REPORT_LOGO_PATH: ${{ github.action_path }}/../../assets/sudo-port-logo-light.svg
+      run: node "$GITHUB_ACTION_PATH/render-report.mjs"

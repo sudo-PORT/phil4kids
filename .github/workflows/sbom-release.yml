@@ -1,3 +1,5 @@
+# Vendored from sudo-PORT/.github@4c532553a480e7ecfba33c914ae9b8ae819a2848.
+# Public repositories cannot invoke an internal reusable workflow directly.
 name: CRA SBOM release
 
 on:
@@ -20,29 +22,542 @@ on:
         required: false
 
 permissions:
-  actions: read
-  attestations: write
-  contents: write
-  id-token: write
+  contents: read
+
+concurrency:
+  group: cra-sbom-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   sbom:
-    name: Generate and publish release SBOM
+    name: Generate, validate and scan CycloneDX SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      artifact-name: ${{ steps.metadata.outputs.artifact-name }}
+      dependency-track-project-version: ${{ steps.metadata.outputs.dependency-track-project-version }}
+      findings: ${{ steps.scan.outputs.findings }}
+      project-name: ${{ steps.metadata.outputs.project-name }}
+      release-version: ${{ steps.metadata.outputs.release-version }}
+      source-sha: ${{ steps.metadata.outputs.source-sha }}
+    steps:
+      - name: Check out exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout-ref || github.event.release.tag_name || github.sha }}
+          persist-credentials: false
+
+      - name: Validate inputs and resolve release metadata
+        id: metadata
+        env:
+          ARTIFACT_NAME_INPUT: cra-sbom
+          DEPENDENCY_TRACK_PROJECT_VERSION_INPUT: ""
+          PROJECT_NAME_INPUT: phil4kids
+          RELEASE_VERSION_INPUT: ${{ inputs.release-version || github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || github.sha }}
+          RETENTION_DAYS: 90
+          SOURCE_PATH_INPUT: .
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          reject_multiline() {
+            local label="$1"
+            local value="$2"
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "::error::$label must not contain line breaks."
+              exit 2
+            fi
+          }
+
+          reject_multiline "artifact-name" "$ARTIFACT_NAME_INPUT"
+          reject_multiline "dependency-track-project-version" "$DEPENDENCY_TRACK_PROJECT_VERSION_INPUT"
+          reject_multiline "project-name" "$PROJECT_NAME_INPUT"
+          reject_multiline "release-version" "$RELEASE_VERSION_INPUT"
+          reject_multiline "source-path" "$SOURCE_PATH_INPUT"
+
+          if [[ ! "$ARTIFACT_NAME_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "::error::artifact-name must be a portable identifier of at most 128 characters."
+            exit 2
+          fi
+          if [[ ! "$RETENTION_DAYS" =~ ^[0-9]+$ ]]; then
+            echo "::error::retention-days must be an integer."
+            exit 2
+          fi
+          if (( RETENTION_DAYS < 1 || RETENTION_DAYS > 400 )); then
+            echo "::error::retention-days must be between 1 and 400."
+            exit 2
+          fi
+          if [[ -z "$SOURCE_PATH_INPUT" || "$SOURCE_PATH_INPUT" == /* ]]; then
+            echo "::error::source-path must be a repository-relative directory."
+            exit 2
+          fi
+
+          workspace_real="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          source_real="$(realpath -e -- "$SOURCE_PATH_INPUT")"
+          if [[ ! -d "$source_real" ]]; then
+            echo "::error::source-path must resolve to a directory."
+            exit 2
+          fi
+          case "$source_real" in
+            "$workspace_real"|"$workspace_real"/*) ;;
+            *) echo "::error::source-path resolves outside the checkout."; exit 2 ;;
+          esac
+
+          source_sha="$(git rev-parse HEAD^{commit})"
+          project_name="$PROJECT_NAME_INPUT"
+          if [[ -z "$project_name" ]]; then
+            project_name="${GITHUB_REPOSITORY#*/}"
+          fi
+          release_version="$RELEASE_VERSION_INPUT"
+          if [[ -z "$release_version" ]]; then
+            if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+              release_version="$GITHUB_REF_NAME"
+            else
+              release_version="$source_sha"
+            fi
+          fi
+          if [[ -z "$project_name" || -z "$release_version" ]]; then
+            echo "::error::Resolved project name and release version must be non-empty."
+            exit 2
+          fi
+
+          dependency_track_project_version="$DEPENDENCY_TRACK_PROJECT_VERSION_INPUT"
+          if [[ -z "$dependency_track_project_version" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_REF_TYPE" == "tag" ]]; then
+              dependency_track_project_version="$release_version"
+            elif [[ -n "$RELEASE_VERSION_INPUT" && "$release_version" != "$source_sha" ]]; then
+              dependency_track_project_version="$release_version"
+            elif [[ "$GITHUB_REF_TYPE" == "branch" && -n "$GITHUB_REF_NAME" ]]; then
+              dependency_track_project_version="$GITHUB_REF_NAME"
+            else
+              dependency_track_project_version="$release_version"
+            fi
+          fi
+          if [[ -z "$dependency_track_project_version" ]]; then
+            echo "::error::Resolved Dependency-Track project version must be non-empty."
+            exit 2
+          fi
+
+          {
+            echo "artifact-name=$ARTIFACT_NAME_INPUT"
+            echo "dependency-track-project-version=$dependency_track_project_version"
+            echo "project-name=$project_name"
+            echo "release-version=$release_version"
+            echo "source-path=$source_real"
+            echo "source-sha=$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified SBOM tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          syft_version="1.51.0"
+          syft_archive="syft_${syft_version}_linux_amd64.tar.gz"
+          syft_sha256="2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/$syft_archive" \
+            "https://github.com/anchore/syft/releases/download/v${syft_version}/${syft_archive}"
+          printf '%s  %s\n' "$syft_sha256" "$RUNNER_TEMP/$syft_archive" \
+            | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$syft_archive" -C "$RUNNER_TEMP" syft
+          test -x "$RUNNER_TEMP/syft"
+
+          cyclonedx_version="0.33.1"
+          cyclonedx_binary="cyclonedx-linux-x64"
+          cyclonedx_sha256="bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/cyclonedx" \
+            "https://github.com/CycloneDX/cyclonedx-cli/releases/download/v${cyclonedx_version}/${cyclonedx_binary}"
+          printf '%s  %s\n' "$cyclonedx_sha256" "$RUNNER_TEMP/cyclonedx" \
+            | sha256sum --check --strict
+          chmod 0755 "$RUNNER_TEMP/cyclonedx"
+
+          trivy_version="0.74.0"
+          trivy_archive="trivy_${trivy_version}_Linux-64bit.tar.gz"
+          trivy_sha256="2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/$trivy_archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${trivy_version}/${trivy_archive}"
+          printf '%s  %s\n' "$trivy_sha256" "$RUNNER_TEMP/$trivy_archive" \
+            | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$trivy_archive" -C "$RUNNER_TEMP" trivy
+          test -x "$RUNNER_TEMP/trivy"
+
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Generate CycloneDX 1.6 SBOM
+        env:
+          PROJECT_NAME: ${{ steps.metadata.outputs.project-name }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.release-version }}
+          SOURCE_PATH: ${{ steps.metadata.outputs.source-path }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.source-sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p cra-sbom
+          syft scan "dir:$SOURCE_PATH" \
+            --source-name "$PROJECT_NAME" \
+            --source-version "$RELEASE_VERSION" \
+            --output cyclonedx-json@1.6=cra-sbom/sbom.cdx.json
+
+          jq --arg repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --arg commit "$SOURCE_SHA" \
+            '.metadata.properties = ((.metadata.properties // []) + [
+              {"name": "sudoport:source:repository", "value": $repository},
+              {"name": "sudoport:source:commit", "value": $commit}
+            ])' cra-sbom/sbom.cdx.json > cra-sbom/sbom.cdx.tmp
+          mv cra-sbom/sbom.cdx.tmp cra-sbom/sbom.cdx.json
+
+      - name: Validate CycloneDX schema and metadata
+        env:
+          PROJECT_NAME: ${{ steps.metadata.outputs.project-name }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.release-version }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.source-sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cyclonedx validate \
+            --input-file cra-sbom/sbom.cdx.json \
+            --input-format json \
+            --input-version v1_6 \
+            --fail-on-errors
+          jq --exit-status \
+            --arg project "$PROJECT_NAME" \
+            --arg version "$RELEASE_VERSION" \
+            --arg commit "$SOURCE_SHA" \
+            '.bomFormat == "CycloneDX"
+              and .specVersion == "1.6"
+              and .metadata.component.name == $project
+              and .metadata.component.version == $version
+              and any(.metadata.properties[]?;
+                .name == "sudoport:source:commit" and .value == $commit)' \
+            cra-sbom/sbom.cdx.json > /dev/null
+
+      - name: Scan SBOM with Trivy
+        id: scan
+        env:
+          TRIVY_SEVERITY: HIGH,CRITICAL
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! "$TRIVY_SEVERITY" =~ ^(UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL)(,(UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL))*$ ]]; then
+            echo "::error::trivy-severity must be a comma-separated list of canonical Trivy severities."
+            exit 2
+          fi
+          trivy sbom \
+            --disable-telemetry \
+            --skip-version-check \
+            --scanners vuln \
+            --severity "$TRIVY_SEVERITY" \
+            --exit-code 0 \
+            --format json \
+            --output cra-sbom/trivy.json \
+            cra-sbom/sbom.cdx.json
+          findings="$(jq '[.Results[]?.Vulnerabilities[]?] | length' cra-sbom/trivy.json)"
+          [[ "$findings" =~ ^[0-9]+$ ]]
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+
+      - name: Create integrity manifest and summary
+        env:
+          ENFORCE: true
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          PROJECT_NAME: ${{ steps.metadata.outputs.project-name }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.release-version }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.source-sha }}
+          TRIVY_SEVERITY: HIGH,CRITICAL
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (
+            cd cra-sbom
+            sha256sum sbom.cdx.json > SHA256SUMS
+            sha256sum sbom.cdx.json trivy.json > EVIDENCE_SHA256SUMS
+          )
+          {
+            echo "## CRA / SBOM"
+            echo
+            echo "- Product: \`$PROJECT_NAME\`"
+            echo "- Version: \`$RELEASE_VERSION\`"
+            echo "- Commit: \`$SOURCE_SHA\`"
+            echo "- Format: \`CycloneDX JSON 1.6\`"
+            echo "- Trivy findings ($TRIVY_SEVERITY): $FINDINGS"
+            echo "- Enforcement: \`$ENFORCE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Render branded sudoPORT customer report
+        uses: ./.github/actions/customer-sbom-report
+        with:
+          sbom-path: cra-sbom/sbom.cdx.json
+          trivy-path: cra-sbom/trivy.json
+          output-directory: cra-sbom/customer
+          project-name: ${{ steps.metadata.outputs.project-name }}
+          release-version: ${{ steps.metadata.outputs.release-version }}
+          source-sha: ${{ steps.metadata.outputs.source-sha }}
+          repository-url: ${{ github.server_url }}/${{ github.repository }}
+          manufacturer-name: sudo/PORT
+          manufacturer-url: https://sudoport.de
+          security-contact: security@sudoport.de
+          classification: Vertraulich – für Kunden und Prüfer
+
+      - name: Assemble customer transparency package
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -m 0644 cra-sbom/sbom.cdx.json cra-sbom/customer/sbom.cdx.json
+          install -m 0644 cra-sbom/SHA256SUMS cra-sbom/customer/SHA256SUMS
+          (
+            cd cra-sbom/customer
+            sha256sum \
+              CUSTOMER-README.txt \
+              customer-package.json \
+              customer-security-report.html \
+              customer-security-report.pdf \
+              sbom.cdx.json \
+              > CUSTOMER_PACKAGE_SHA256SUMS
+            zip -X -9 sudoport-software-transparency-package.zip \
+              CUSTOMER-README.txt \
+              CUSTOMER_PACKAGE_SHA256SUMS \
+              SHA256SUMS \
+              customer-package.json \
+              customer-security-report.html \
+              customer-security-report.pdf \
+              sbom.cdx.json
+            sha256sum sudoport-software-transparency-package.zip \
+              > CUSTOMER_PACKAGE_ARCHIVE_SHA256
+          )
+
+      - name: Upload SBOM evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.metadata.outputs.artifact-name }}
+          path: cra-sbom/
+          if-no-files-found: error
+          retention-days: 90
+
+  policy:
+    name: Enforce vulnerability policy
+    needs: sbom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      ENFORCE: true
+      FINDINGS: ${{ needs.sbom.outputs.findings }}
+      TRIVY_SEVERITY: HIGH,CRITICAL
+    steps:
+      - name: Evaluate release gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$FINDINGS" =~ ^[0-9]+$ ]]
+          if [[ "$ENFORCE" == "true" && "$FINDINGS" -gt 0 ]]; then
+            echo "::error::Trivy found $FINDINGS $TRIVY_SEVERITY vulnerability finding(s)."
+            exit 1
+          fi
+          echo "SBOM vulnerability policy passed with $FINDINGS finding(s); enforcement=$ENFORCE."
+
+  dependency-track:
+    name: Upload SBOM to Dependency-Track
+    if: ${{ vars.DEPENDENCY_TRACK_URL != '' && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    needs: sbom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    env:
+      DEPENDENCY_TRACK_API_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
+      DEPENDENCY_TRACK_IS_LATEST: true
+      DEPENDENCY_TRACK_URL: ${{ vars.DEPENDENCY_TRACK_URL }}
+      PROJECT_NAME: ${{ needs.sbom.outputs.project-name }}
+      PROJECT_VERSION: ${{ needs.sbom.outputs.dependency-track-project-version }}
+    steps:
+      - name: Download SBOM evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.sbom.outputs.artifact-name }}
+          path: cra-sbom
+
+      - name: Upload through the Dependency-Track BOM API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "$DEPENDENCY_TRACK_API_KEY" ]]; then
+            echo "::notice::Dependency-Track URL is configured, but no API key was passed; upload skipped."
+            exit 0
+          fi
+          if [[ ! "$DEPENDENCY_TRACK_URL" =~ ^https://[^[:space:]]+$ ]]; then
+            echo "::error::dependency-track-url must be an HTTPS URL without whitespace."
+            exit 2
+          fi
+          endpoint="${DEPENDENCY_TRACK_URL%/}/api/v1/bom"
+          response_file="$RUNNER_TEMP/dependency-track-response.json"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
+            --proto '=https' --tlsv1.2 \
+            --request POST \
+            --header "X-Api-Key: $DEPENDENCY_TRACK_API_KEY" \
+            --form "autoCreate=true" \
+            --form "isLatest=$DEPENDENCY_TRACK_IS_LATEST" \
+            --form "projectName=$PROJECT_NAME" \
+            --form "projectVersion=$PROJECT_VERSION" \
+            --form "bom=@cra-sbom/sbom.cdx.json;type=application/json" \
+            --output "$response_file" \
+            "$endpoint"
+          upload_token="$(jq -r '.token // empty' "$response_file")"
+          if [[ -z "$upload_token" ]]; then
+            echo "::error::Dependency-Track did not return a BOM processing token."
+            exit 1
+          fi
+          echo "Dependency-Track accepted the SBOM for asynchronous processing."
+          {
+            echo "## Dependency-Track"
+            echo
+            echo "- Project: \`$PROJECT_NAME\`"
+            echo "- Version: \`$PROJECT_VERSION\`"
+            echo "- Latest: \`$DEPENDENCY_TRACK_IS_LATEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  attest:
+    name: Attest SBOM provenance
+    if: ${{ false && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    needs:
+      - sbom
+      - policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       artifact-metadata: write
       attestations: write
-      contents: write
+      contents: read
       id-token: write
-    uses: sudo-PORT/.github/.github/workflows/sbom-release.yml@4c532553a480e7ecfba33c914ae9b8ae819a2848
-    with:
-      checkout-ref: ${{ inputs.checkout-ref || github.event.release.tag_name || github.sha }}
-      release-version: ${{ inputs.release-version || github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || github.sha }}
-      project-name: phil4kids
-      source-path: .
-      retention-days: 90
-      enforce: true
-      attest: false
-      dependency-track-url: ${{ vars.DEPENDENCY_TRACK_URL }}
-      publish-release-assets: ${{ github.event_name == 'release' }}
-    secrets:
-      dependency-track-api-key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
+    steps:
+      - name: Download SBOM evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.sbom.outputs.artifact-name }}
+          path: cra-sbom
+
+      - name: Generate keyless Sigstore attestation
+        id: attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
+        with:
+          subject-path: cra-sbom/sbom.cdx.json
+
+      - name: Prepare portable attestation bundle
+        env:
+          BUNDLE_PATH: ${{ steps.attestation.outputs.bundle-path }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s "$BUNDLE_PATH"
+          install -m 0644 "$BUNDLE_PATH" cra-sbom/sbom.attestation.sigstore.json
+          (
+            cd cra-sbom
+            sha256sum sbom.attestation.sigstore.json > ATTESTATION_SHA256SUM
+          )
+
+      - name: Upload attestation bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.sbom.outputs.artifact-name }}-attestation
+          path: |
+            cra-sbom/sbom.attestation.sigstore.json
+            cra-sbom/ATTESTATION_SHA256SUM
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Publish SBOM release assets
+    if: ${{ always() && github.event_name == 'release' && needs.sbom.result == 'success' && needs.policy.result == 'success' && (needs.attest.result == 'success' || needs.attest.result == 'skipped') }}
+    needs:
+      - sbom
+      - policy
+      - attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.sbom.outputs.source-sha }}
+    steps:
+      - name: Verify tag-bound release context
+        id: context
+        env:
+          RELEASE_ACTION: ${{ github.event.action }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            push)
+              if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+                echo "::error::Push-based release publication requires a tag ref."
+                exit 2
+              fi
+              release_tag="$GITHUB_REF_NAME"
+              ;;
+            release)
+              if [[ "$RELEASE_ACTION" != "published" || -z "$RELEASE_EVENT_TAG" ]]; then
+                echo "::error::Release-based publication requires the published action and its tag."
+                exit 2
+              fi
+              release_tag="$RELEASE_EVENT_TAG"
+              ;;
+            *)
+              echo "::error::Release assets may only be published by a tag push or published release."
+              exit 2
+              ;;
+          esac
+          if [[ "$release_tag" == -* || "$release_tag" == *$'\n'* || "$release_tag" == *$'\r'* ]]; then
+            echo "::error::Unsafe release tag."
+            exit 2
+          fi
+          echo "release-tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag for commit verification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.context.outputs.release-tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag and existing release
+        id: release
+        env:
+          RELEASE_TAG: ${{ steps.context.outputs.release-tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tag_sha="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          if [[ "$SOURCE_SHA" != "$tag_sha" ]]; then
+            echo "::error::Inventoried commit does not match the peeled release tag commit."
+            exit 2
+          fi
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
+          echo "release-tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download SBOM evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.sbom.outputs.artifact-name }}
+          path: cra-sbom
+
+      - name: Upload customer-facing release assets
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release-tag }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          assets=(
+            cra-sbom/sbom.cdx.json
+            cra-sbom/SHA256SUMS
+            cra-sbom/customer/customer-security-report.pdf
+            cra-sbom/customer/sudoport-software-transparency-package.zip
+            cra-sbom/customer/CUSTOMER_PACKAGE_ARCHIVE_SHA256
+          )
+          if [[ -s cra-sbom/sbom.attestation.sigstore.json ]]; then
+            assets+=(cra-sbom/sbom.attestation.sigstore.json cra-sbom/ATTESTATION_SHA256SUM)
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
