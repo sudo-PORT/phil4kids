@@ -8,8 +8,13 @@ export async function generateStaticParams() {
   }));
 }
 
-export function generateMetadata({ params }: { params: { slug: string } }) {
-  const article = articles.find((a) => a.slug === params.slug);
+type ArticlePageProps = {
+  params: Promise<{ slug: string }>;
+};
+
+export async function generateMetadata({ params }: ArticlePageProps) {
+  const { slug } = await params;
+  const article = articles.find((a) => a.slug === slug);
   return {
     title: article ? `${article.title} - Phil4Kids` : 'Artikel nicht gefunden',
     description: article ? article.excerpt : '',
@@ -25,8 +30,9 @@ function formatDate(dateStr: string) {
   });
 }
 
-export default async function ArticlePage({ params }: { params: { slug: string } }) {
-  const article = articles.find((a) => a.slug === params.slug);
+export default async function ArticlePage({ params }: ArticlePageProps) {
+  const { slug } = await params;
+  const article = articles.find((a) => a.slug === slug);
 
   if (!article) {
     notFound();

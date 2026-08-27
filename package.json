@@ -7,10 +7,10 @@
     "dev": "next dev",
     "build": "NODE_ENV=production next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
-    "next": "^14.2.15",
+    "next": "16.3.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -19,8 +19,8 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "eslint": "^8",
-    "eslint-config-next": "^14.2.15",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

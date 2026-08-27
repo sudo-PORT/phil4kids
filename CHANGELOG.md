@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-27 – Sicherheitsaktualisierung der Web-Plattform
+
+- Next.js auf 16.3.3 sowie die zugehörige ESLint-Konfiguration aktualisiert und
+  dynamische Routen auf die asynchrone Parameter-API migriert.
+- Der lokale HIGH-/CRITICAL-Scan ist ohne offene produktive Befunde; Lint und
+  Produktions-Build laufen mit dem aktualisierten Lockfile erfolgreich.
+
 <!-- cra-evidence-gate-2026-08-27 -->
 ## 2026-08-27 – Verbindliches CRA-Evidenz-Gate
 
