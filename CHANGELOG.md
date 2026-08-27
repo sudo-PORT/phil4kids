@@ -1,5 +1,14 @@
 # Changelog
 
+<!-- cra-sbom-public-workflow-2026-08-27 -->
+## 2026-08-27 – Öffentlicher CRA-SBOM-Workflow
+
+- Den geprüften CRA-SBOM-Workflowstand samt minimal benötigtem Report-Renderer
+  repo-lokal eingebunden, weil öffentliche GitHub-Repositories keine internen
+  wiederverwendbaren Workflows aufrufen können. Tool-Prüfsummen, Action-SHAs,
+  Fail-closed-Richtlinie, Kundenpaket und Dependency-Track-Identität bleiben
+  unverändert.
+
 <!-- cra-sbom-release-2026-08-27 -->
 ## 2026-08-27 – CRA-SBOM-Standard
 
