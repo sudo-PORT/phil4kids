@@ -1,8 +1,11 @@
-# Vendored from sudo-PORT/.github@4c532553a480e7ecfba33c914ae9b8ae819a2848.
+# Vendored from sudo-PORT/.github@3563a31df3d53e66de2d8245b04e179a315cb720.
 # Public repositories cannot invoke an internal reusable workflow directly.
 name: CRA SBOM release
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -30,7 +33,7 @@ concurrency:
 
 jobs:
   sbom:
-    name: Generate, validate and scan CycloneDX SBOM
+    name: Generate, validate and scan CycloneDX/SPDX SBOMs
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -188,7 +191,7 @@ jobs:
 
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
-      - name: Generate CycloneDX 1.6 SBOM
+      - name: Generate CycloneDX 1.6 and SPDX 2.3 SBOMs
         env:
           PROJECT_NAME: ${{ steps.metadata.outputs.project-name }}
           RELEASE_VERSION: ${{ steps.metadata.outputs.release-version }}
@@ -201,7 +204,8 @@ jobs:
           syft scan "dir:$SOURCE_PATH" \
             --source-name "$PROJECT_NAME" \
             --source-version "$RELEASE_VERSION" \
-            --output cyclonedx-json@1.6=cra-sbom/sbom.cdx.json
+            --output cyclonedx-json@1.6=cra-sbom/sbom.cdx.json \
+            --output spdx-json@2.3=cra-sbom/sbom.spdx.json
 
           jq --arg repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --arg commit "$SOURCE_SHA" \
@@ -210,6 +214,13 @@ jobs:
               {"name": "sudoport:source:commit", "value": $commit}
             ])' cra-sbom/sbom.cdx.json > cra-sbom/sbom.cdx.tmp
           mv cra-sbom/sbom.cdx.tmp cra-sbom/sbom.cdx.json
+
+          jq --arg repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --arg commit "$SOURCE_SHA" \
+            '.comment = ("sudoport:source:repository=" + $repository
+              + "\nsudoport:source:commit=" + $commit)' \
+            cra-sbom/sbom.spdx.json > cra-sbom/sbom.spdx.tmp
+          mv cra-sbom/sbom.spdx.tmp cra-sbom/sbom.spdx.json
 
       - name: Validate CycloneDX schema and metadata
         env:
@@ -235,6 +246,27 @@ jobs:
               and any(.metadata.properties[]?;
                 .name == "sudoport:source:commit" and .value == $commit)' \
             cra-sbom/sbom.cdx.json > /dev/null
+
+      - name: Validate SPDX schema identity and metadata
+        env:
+          PROJECT_NAME: ${{ steps.metadata.outputs.project-name }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.source-sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jq --exit-status \
+            --arg project "$PROJECT_NAME" \
+            --arg commit "$SOURCE_SHA" \
+            '.spdxVersion == "SPDX-2.3"
+              and .dataLicense == "CC0-1.0"
+              and .SPDXID == "SPDXRef-DOCUMENT"
+              and .name == $project
+              and (.documentNamespace | type == "string" and length > 0)
+              and (.creationInfo.created | type == "string" and length > 0)
+              and (.packages | type == "array")
+              and (.relationships | type == "array")
+              and (.comment | contains("sudoport:source:commit=" + $commit))' \
+            cra-sbom/sbom.spdx.json > /dev/null
 
       - name: Scan SBOM with Trivy
         id: scan
@@ -273,8 +305,8 @@ jobs:
           set -Eeuo pipefail
           (
             cd cra-sbom
-            sha256sum sbom.cdx.json > SHA256SUMS
-            sha256sum sbom.cdx.json trivy.json > EVIDENCE_SHA256SUMS
+            sha256sum sbom.cdx.json sbom.spdx.json > SHA256SUMS
+            sha256sum sbom.cdx.json sbom.spdx.json trivy.json > EVIDENCE_SHA256SUMS
           )
           {
             echo "## CRA / SBOM"
@@ -282,7 +314,7 @@ jobs:
             echo "- Product: \`$PROJECT_NAME\`"
             echo "- Version: \`$RELEASE_VERSION\`"
             echo "- Commit: \`$SOURCE_SHA\`"
-            echo "- Format: \`CycloneDX JSON 1.6\`"
+            echo "- Formats: \`CycloneDX JSON 1.6\`, \`SPDX JSON 2.3\`"
             echo "- Trivy findings ($TRIVY_SEVERITY): $FINDINGS"
             echo "- Enforcement: \`$ENFORCE\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -291,6 +323,7 @@ jobs:
         uses: ./.github/actions/customer-sbom-report
         with:
           sbom-path: cra-sbom/sbom.cdx.json
+          spdx-path: cra-sbom/sbom.spdx.json
           trivy-path: cra-sbom/trivy.json
           output-directory: cra-sbom/customer
           project-name: ${{ steps.metadata.outputs.project-name }}
@@ -307,6 +340,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           install -m 0644 cra-sbom/sbom.cdx.json cra-sbom/customer/sbom.cdx.json
+          install -m 0644 cra-sbom/sbom.spdx.json cra-sbom/customer/sbom.spdx.json
           install -m 0644 cra-sbom/SHA256SUMS cra-sbom/customer/SHA256SUMS
           (
             cd cra-sbom/customer
@@ -316,6 +350,7 @@ jobs:
               customer-security-report.html \
               customer-security-report.pdf \
               sbom.cdx.json \
+              sbom.spdx.json \
               > CUSTOMER_PACKAGE_SHA256SUMS
             zip -X -9 sudoport-software-transparency-package.zip \
               CUSTOMER-README.txt \
@@ -324,7 +359,8 @@ jobs:
               customer-package.json \
               customer-security-report.html \
               customer-security-report.pdf \
-              sbom.cdx.json
+              sbom.cdx.json \
+              sbom.spdx.json
             sha256sum sudoport-software-transparency-package.zip \
               > CUSTOMER_PACKAGE_ARCHIVE_SHA256
           )
@@ -384,8 +420,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           if [[ -z "$DEPENDENCY_TRACK_API_KEY" ]]; then
-            echo "::notice::Dependency-Track URL is configured, but no API key was passed; upload skipped."
-            exit 0
+            echo "::error::Dependency-Track upload is required, but no API key was passed."
+            exit 1
           fi
           if [[ ! "$DEPENDENCY_TRACK_URL" =~ ^https://[^[:space:]]+$ ]]; then
             echo "::error::dependency-track-url must be an HTTPS URL without whitespace."
@@ -420,7 +456,7 @@ jobs:
 
   attest:
     name: Attest SBOM provenance
-    if: ${{ false && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
     needs:
       - sbom
       - policy
@@ -442,7 +478,7 @@ jobs:
         id: attestation
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
         with:
-          subject-path: cra-sbom/sbom.cdx.json
+          subject-path: cra-sbom/sbom.*.json
 
       - name: Prepare portable attestation bundle
         env:
@@ -552,6 +588,7 @@ jobs:
           set -Eeuo pipefail
           assets=(
             cra-sbom/sbom.cdx.json
+            cra-sbom/sbom.spdx.json
             cra-sbom/SHA256SUMS
             cra-sbom/customer/customer-security-report.pdf
             cra-sbom/customer/sudoport-software-transparency-package.zip
@@ -561,3 +598,53 @@ jobs:
             assets+=(cra-sbom/sbom.attestation.sigstore.json cra-sbom/ATTESTATION_SHA256SUM)
           fi
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+
+  gate:
+    name: CRA release gate
+    if: always()
+    needs:
+      - sbom
+      - policy
+      - dependency-track
+      - attest
+      - release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      ATTEST_RESULT: ${{ needs.attest.result }}
+      DEPENDENCY_TRACK_RESULT: ${{ needs.dependency-track.result }}
+      EVENT_NAME: ${{ github.event_name }}
+      POLICY_RESULT: ${{ needs.policy.result }}
+      RELEASE_RESULT: ${{ needs.release.result }}
+      SBOM_RESULT: ${{ needs.sbom.result }}
+    steps:
+      - name: Require complete CRA release evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$SBOM_RESULT" == "success" ]] || {
+            echo "::error::SBOM generation did not succeed: $SBOM_RESULT"
+            exit 1
+          }
+          [[ "$POLICY_RESULT" == "success" ]] || {
+            echo "::error::Vulnerability policy did not succeed: $POLICY_RESULT"
+            exit 1
+          }
+          if [[ "$EVENT_NAME" != "pull_request" && "$EVENT_NAME" != "pull_request_target" ]]; then
+            [[ "$DEPENDENCY_TRACK_RESULT" == "success" ]] || {
+              echo "::error::Required Dependency-Track upload did not succeed: $DEPENDENCY_TRACK_RESULT"
+              exit 1
+            }
+            [[ "$ATTEST_RESULT" == "success" ]] || {
+              echo "::error::Required SBOM attestation did not succeed: $ATTEST_RESULT"
+              exit 1
+            }
+          fi
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            [[ "$RELEASE_RESULT" == "success" ]] || {
+              echo "::error::Required release publication did not succeed: $RELEASE_RESULT"
+              exit 1
+            }
+          fi
+          echo "CRA release gate passed for $GITHUB_REPOSITORY@$GITHUB_SHA."

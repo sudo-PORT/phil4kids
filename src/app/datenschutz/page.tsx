@@ -22,7 +22,7 @@ export default function DatenschutzPage() {
           <div>
             <h2 className="text-xl font-semibold text-[#2C3E50] mb-2">2. Datenerfassung auf dieser Website</h2>
             <p className="text-[#2C3E50]">
-              Die Datenverarbeitung erfolgt durch den Websitebetreiber. Dessen Kontaktdaten können Sie dem Abschnitt „Hinweis zur verantwortlichen Stelle" in dieser Datenschutzerklärung entnehmen.
+              Die Datenverarbeitung erfolgt durch den Websitebetreiber. Dessen Kontaktdaten können Sie dem Abschnitt „Hinweis zur verantwortlichen Stelle“ in dieser Datenschutzerklärung entnehmen.
             </p>
           </div>
 

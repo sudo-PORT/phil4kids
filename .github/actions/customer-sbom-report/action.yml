@@ -5,6 +5,9 @@ inputs:
   sbom-path:
     description: Path to the CycloneDX JSON SBOM
     required: true
+  spdx-path:
+    description: Path to the SPDX 2.3 JSON SBOM
+    required: true
   trivy-path:
     description: Path to the Trivy JSON evidence
     required: true
@@ -60,6 +63,7 @@ runs:
       shell: bash
       env:
         CUSTOMER_REPORT_SBOM_PATH: ${{ inputs.sbom-path }}
+        CUSTOMER_REPORT_SPDX_PATH: ${{ inputs.spdx-path }}
         CUSTOMER_REPORT_TRIVY_PATH: ${{ inputs.trivy-path }}
         CUSTOMER_REPORT_OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
         CUSTOMER_REPORT_PROJECT_NAME: ${{ inputs.project-name }}

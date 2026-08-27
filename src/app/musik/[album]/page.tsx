@@ -5,16 +5,22 @@ export function generateStaticParams() {
   return albums.map((album) => ({ album: album.slug }));
 }
 
-export async function generateMetadata({ params }: { params: { album: string } }) {
-  const album = getAlbumBySlug(params.album);
+type AlbumPageProps = {
+  params: Promise<{ album: string }>;
+};
+
+export async function generateMetadata({ params }: AlbumPageProps) {
+  const { album: albumSlug } = await params;
+  const album = getAlbumBySlug(albumSlug);
   return {
     title: album ? `${album.title} - Phil4Kids Musik` : 'Musik - Phil4Kids',
     description: album ? album.description : 'Hören Sie die Musik von Philipp Greifenberg',
   };
 }
 
-export default async function AlbumPage({ params }: { params: { album: string } }) {
-  const album = getAlbumBySlug(params.album);
+export default async function AlbumPage({ params }: AlbumPageProps) {
+  const { album: albumSlug } = await params;
+  const album = getAlbumBySlug(albumSlug);
 
   if (!album) {
     return (

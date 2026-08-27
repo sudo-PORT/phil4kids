@@ -7,15 +7,6 @@ export const metadata = {
   description: 'Besuche Philipp Greifenberg live auf Festivals, in Schulen und bei Kinderfeiern.',
 };
 
-function formatDate(dateStr: string) {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('de-DE', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
 export default function LivePage() {
   return (
     <div className="py-16 px-4 sm:px-6 lg:px-8">
