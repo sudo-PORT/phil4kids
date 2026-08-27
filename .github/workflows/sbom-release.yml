@@ -1,0 +1,48 @@
+name: CRA SBOM release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      checkout-ref:
+        description: Existing tag, branch or commit to backfill
+        type: string
+        required: false
+      release-version:
+        description: Version recorded for a manual backfill
+        type: string
+        required: false
+
+permissions:
+  actions: read
+  attestations: write
+  contents: write
+  id-token: write
+
+jobs:
+  sbom:
+    name: Generate and publish release SBOM
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    uses: sudo-PORT/.github/.github/workflows/sbom-release.yml@4c532553a480e7ecfba33c914ae9b8ae819a2848
+    with:
+      checkout-ref: ${{ inputs.checkout-ref || github.event.release.tag_name || github.sha }}
+      release-version: ${{ inputs.release-version || github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || github.sha }}
+      project-name: phil4kids
+      source-path: .
+      retention-days: 90
+      enforce: true
+      attest: false
+      dependency-track-url: ${{ vars.DEPENDENCY_TRACK_URL }}
+      publish-release-assets: ${{ github.event_name == 'release' }}
+    secrets:
+      dependency-track-api-key: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
