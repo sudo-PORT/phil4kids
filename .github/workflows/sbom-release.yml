@@ -1,4 +1,4 @@
-# Vendored from sudo-PORT/.github@3563a31df3d53e66de2d8245b04e179a315cb720.
+# Vendored from sudo-PORT/.github@56bc8b3e82a6dfe543311b7001629e8faad4585b.
 # Public repositories cannot invoke an internal reusable workflow directly.
 name: CRA SBOM release
 
@@ -127,21 +127,11 @@ jobs:
           fi
 
           dependency_track_project_version="$DEPENDENCY_TRACK_PROJECT_VERSION_INPUT"
-          if [[ -z "$dependency_track_project_version" ]]; then
-            if [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_REF_TYPE" == "tag" ]]; then
-              dependency_track_project_version="$release_version"
-            elif [[ -n "$RELEASE_VERSION_INPUT" && "$release_version" != "$source_sha" ]]; then
-              dependency_track_project_version="$release_version"
-            elif [[ "$GITHUB_REF_TYPE" == "branch" && -n "$GITHUB_REF_NAME" ]]; then
-              dependency_track_project_version="$GITHUB_REF_NAME"
-            else
-              dependency_track_project_version="$release_version"
-            fi
-          fi
-          if [[ -z "$dependency_track_project_version" ]]; then
-            echo "::error::Resolved Dependency-Track project version must be non-empty."
+          if [[ -n "$dependency_track_project_version" && "$dependency_track_project_version" != "main" ]]; then
+            echo "::error::dependency-track-project-version must be empty or exactly main. Release history belongs in immutable SBOM evidence, not separate Dependency-Track projects."
             exit 2
           fi
+          dependency_track_project_version="main"
 
           {
             echo "artifact-name=$ARTIFACT_NAME_INPUT"

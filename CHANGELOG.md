@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-30 – Eindeutiges Dependency-Track-Projekt
+
+- Der vendorte SBOM-Workflow schreibt alle Branch-, Tag- und Release-Läufe nur
+  noch nach `phil4kids/main`; abweichende Projektversionen werden fail-closed
+  abgewiesen. Unveränderliche Release-Historie bleibt in den SBOM-Artefakten
+  und Attestierungen erhalten, ohne neue Dependency-Track-Projekte anzulegen.
+
 ## 2026-08-27 – Sicherheitsaktualisierung der Web-Plattform
 
 - Next.js auf 16.3.3 sowie die zugehörige ESLint-Konfiguration aktualisiert und
