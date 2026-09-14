@@ -18,19 +18,20 @@ concurrency:
 jobs:
   security:
     name: Weekly full scan
-    uses: sudo-PORT/.github/.github/workflows/node-ci.yml@3563a31df3d53e66de2d8245b04e179a315cb720
+    uses: sudo-PORT/.github/.github/workflows/node-ci.yml@85309710779b018037666a12b301cfa9dd24d6b6
     with:
       quality-enabled: false
       gitleaks-enabled: true
       semgrep-enabled: true
       trivy-enabled: true
+      security-runner-class: github-hosted
       security-enforce: true
 
   triage:
     name: Weekly issue triage
     if: always()
     needs: security
-    uses: sudo-PORT/.github/.github/workflows/security-triage.yml@3563a31df3d53e66de2d8245b04e179a315cb720
+    uses: sudo-PORT/.github/.github/workflows/security-triage.yml@85309710779b018037666a12b301cfa9dd24d6b6
     with:
       security-result: ${{ needs.security.result }}
       security-enforce: true
