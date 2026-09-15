@@ -1,37 +1,351 @@
-name: Scheduled security scan
+# Vendored from sudo-PORT/.github@ea1ef4468482e1d79874f5c5682c9a5e0a3a846d.
+# Public repositories cannot invoke the internal reusable workflows directly.
+name: Security scan
 
 on:
+  pull_request:
   schedule:
     - cron: "37 4 * * 1"
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
-  packages: read
-  issues: write
 
 concurrency:
   group: scheduled-security-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  security:
-    name: Weekly full scan
-    uses: sudo-PORT/.github/.github/workflows/node-ci.yml@85309710779b018037666a12b301cfa9dd24d6b6
-    with:
-      quality-enabled: false
-      gitleaks-enabled: true
-      semgrep-enabled: true
-      trivy-enabled: true
-      security-runner-class: github-hosted
-      security-enforce: true
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install verified Gitleaks binary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="8.30.1"
+          archive="gitleaks_${version}_linux_x64.tar.gz"
+          base_url="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/$archive" "$base_url/$archive"
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/checksums.txt" "$base_url/gitleaks_${version}_checksums.txt"
+          expected="$(awk -v file="$archive" '$2 == file { print $1 }' "$RUNNER_TEMP/checksums.txt")"
+          test "$expected" != ""
+          printf '%s  %s\n' "$expected" "$RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+          test -x "$RUNNER_TEMP/gitleaks"
+
+      - name: Scan repository contents
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status=0
+          "$RUNNER_TEMP/gitleaks" dir --no-banner --redact \
+            --report-format json --report-path gitleaks.json . || status=$?
+          if (( status > 1 )); then
+            echo "::error::Gitleaks failed with scanner status $status."
+            exit "$status"
+          fi
+          findings="$(jq 'length' gitleaks.json)"
+          {
+            echo "## Gitleaks"
+            echo
+            echo "- Findings: $findings"
+            echo "- Enforcement: true"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( status == 1 )); then
+            echo "::error::Gitleaks found $findings potential secret(s)."
+            exit 1
+          fi
+
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gitleaks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: gitleaks.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep:1.173.0@sha256:67319956da3dcb58baf5b322899c15458e3963e7018a86aeeb5cd224e69cb77a
+    steps:
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan source code
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          semgrep scan --config p/default --severity ERROR \
+            --metrics=off --disable-version-check \
+            --exclude node_modules --exclude .next --exclude dist \
+            --exclude build --exclude coverage --exclude .releases \
+            --exclude .deploy --exclude .backups --exclude .runtime --exclude vendor \
+            --json-output semgrep.json --sarif-output semgrep.sarif \
+            --error .
+
+      - name: Summarize Semgrep results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Semgrep Community Edition"
+            echo
+            if [[ -s semgrep.json ]]; then
+              echo "- Findings (ERROR): $(python -c 'import json; print(len(json.load(open("semgrep.json"))["results"]))')"
+            else
+              echo "- Scan did not produce a JSON report."
+            fi
+            echo "- Enforcement: true"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Semgrep reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: semgrep-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            semgrep.json
+            semgrep.sarif
+          if-no-files-found: warn
+          retention-days: 14
+
+  trivy:
+    name: Trivy repository scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install verified Trivy binary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="0.74.0"
+          archive="trivy_${version}_Linux-64bit.tar.gz"
+          expected="2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+          url="https://github.com/aquasecurity/trivy/releases/download/v${version}/${archive}"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$RUNNER_TEMP/$archive" "$url"
+          printf '%s  %s\n' "$expected" "$RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" trivy
+          test -x "$RUNNER_TEMP/trivy"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Scan dependencies, configuration, and secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          common=(fs --skip-version-check --scanners vuln,misconfig,secret --severity HIGH,CRITICAL)
+          common+=(--skip-dirs .git --skip-dirs node_modules --skip-dirs .next)
+          common+=(--skip-dirs dist --skip-dirs build --skip-dirs coverage)
+          common+=(--skip-dirs .releases --skip-dirs .deploy --skip-dirs .backups)
+          common+=(--skip-dirs .runtime --skip-dirs vendor)
+          trivy "${common[@]}" --exit-code 0 --format json --output trivy.json .
+          trivy convert --format sarif --output trivy.sarif trivy.json
+
+      - name: Enforce Trivy policy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          findings="$(jq '[.Results[]? | ((.Vulnerabilities // []) + (.Misconfigurations // []) + (.Secrets // []))[]] | length' trivy.json)"
+          {
+            echo "## Trivy"
+            echo
+            echo "- Findings (HIGH,CRITICAL): $findings"
+            echo "- Scanners: vuln,misconfig,secret"
+            echo "- Enforcement: true"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( findings > 0 )); then
+            echo "::error::Trivy found $findings policy-relevant issue(s)."
+            exit 1
+          fi
+
+      - name: Upload Trivy reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            trivy.json
+            trivy.sarif
+          if-no-files-found: warn
+          retention-days: 14
 
   triage:
-    name: Weekly issue triage
-    if: always()
-    needs: security
-    uses: sudo-PORT/.github/.github/workflows/security-triage.yml@85309710779b018037666a12b301cfa9dd24d6b6
-    with:
-      security-result: ${{ needs.security.result }}
-      security-enforce: true
+    name: Security issue triage
+    if: always() && github.event_name != 'pull_request'
+    needs:
+      - secrets
+      - semgrep
+      - trivy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GITLEAKS_RESULT: ${{ needs.secrets.result }}
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_MARKER: "<!-- sudo-security-scan -->"
+      ISSUE_TITLE: "Security-Scan: offene Befunde oder Scannerfehler"
+      SEMGREP_RESULT: ${{ needs.semgrep.result }}
+      TRIVY_RESULT: ${{ needs.trivy.result }}
+    steps:
+      - name: Download security reports
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: "{gitleaks,semgrep,trivy}-${{ github.run_id }}-${{ github.run_attempt }}"
+          path: security-reports
+          merge-multiple: true
+
+      - name: Create sanitized triage summary
+        id: summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          count_json() {
+            local file="$1"
+            local filter="$2"
+            if [[ ! -s "$file" ]]; then
+              printf '%s' unknown
+              return
+            fi
+            jq -r "$filter" "$file"
+          }
+
+          gitleaks_count="$(count_json security-reports/gitleaks.json 'length')"
+          semgrep_count="$(count_json security-reports/semgrep.json '.results | length')"
+          trivy_count="$(count_json security-reports/trivy.json '[.Results[]? | ((.Vulnerabilities // []) + (.Misconfigurations // []) + (.Secrets // []))[]] | length')"
+          trivy_critical="$(count_json security-reports/trivy.json '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length')"
+
+          scanner_error=false
+          for result in "$GITLEAKS_RESULT" "$SEMGREP_RESULT" "$TRIVY_RESULT"; do
+            [[ "$result" == success ]] || scanner_error=true
+          done
+          for count in "$gitleaks_count" "$semgrep_count" "$trivy_count"; do
+            [[ "$count" =~ ^[0-9]+$ ]] || scanner_error=true
+          done
+
+          finding_total=0
+          if [[ "$gitleaks_count" =~ ^[0-9]+$ ]]; then
+            finding_total=$((finding_total + gitleaks_count))
+          fi
+          if [[ "$semgrep_count" =~ ^[0-9]+$ ]]; then
+            finding_total=$((finding_total + semgrep_count))
+          fi
+          if [[ "$trivy_count" =~ ^[0-9]+$ ]]; then
+            finding_total=$((finding_total + trivy_count))
+          fi
+
+          if [[ "$scanner_error" == true || "$finding_total" -gt 0 ]]; then
+            action=open
+          else
+            action=close
+          fi
+
+          {
+            echo "action=$action"
+            echo "finding-total=$finding_total"
+            echo "scanner-error=$scanner_error"
+          } >> "$GITHUB_OUTPUT"
+
+          cat > security-issue.md <<EOF
+          $ISSUE_MARKER
+          ## Automatischer woechentlicher Security-Scan
+
+          | Pruefung | Befunde |
+          | --- | ---: |
+          | Gitleaks | $gitleaks_count |
+          | Semgrep ERROR | $semgrep_count |
+          | Trivy HIGH/CRITICAL | $trivy_count |
+          | davon Trivy CRITICAL | $trivy_critical |
+
+          - Repository: \`$GITHUB_REPOSITORY\`
+          - Commit: \`$GITHUB_SHA\`
+          - Gitleaks-Ergebnis: \`$GITLEAKS_RESULT\`
+          - Semgrep-Ergebnis: \`$SEMGREP_RESULT\`
+          - Trivy-Ergebnis: \`$TRIVY_RESULT\`
+          - Enforcement: \`true\`
+          - Scannerfehler: \`$scanner_error\`
+          - [Workflow-Lauf](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
+
+          Die Detailberichte liegen als kurzlebige, zugriffsgeschuetzte Workflow-Artefakte vor.
+          In dieses Issue werden absichtlich keine Secret-Werte oder Fundstellen kopiert.
+
+          Naechster Schritt: Befunde triagieren, echte Risiken beheben und den Lauf erneut starten.
+          Das Issue wird nach einem vollstaendig sauberen Lauf automatisch geschlossen.
+          EOF
+
+          {
+            echo "## Security-Triage"
+            echo
+            echo "- Befunde gesamt: $finding_total"
+            echo "- Scannerfehler: $scanner_error"
+            echo "- Issue-Aktion: $action"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create or update security issue
+        if: steps.summary.outputs.action == 'open'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh label create security --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "Automatisch oder manuell erkannte Sicherheitsbefunde" --force
+          gh label create security-scan --repo "$GITHUB_REPOSITORY" --color D93F0B \
+            --description "Woechentlicher automatisierter Security-Scan" --force
+
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label security-scan --json number,title \
+            --jq '.[] | select(.title == "Security-Scan: offene Befunde oder Scannerfehler") | .number' \
+            | head -n 1)"
+          if [[ -n "$issue_number" ]]; then
+            gh issue edit "$issue_number" --repo "$GITHUB_REPOSITORY" \
+              --title "$ISSUE_TITLE" --body-file security-issue.md \
+              --add-label security --add-label security-scan
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
+              --body-file security-issue.md --label security --label security-scan
+          fi
+
+      - name: Close resolved security issue
+        if: steps.summary.outputs.action == 'close'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --label security-scan --json number,title \
+            --jq '.[] | select(.title == "Security-Scan: offene Befunde oder Scannerfehler") | .number' \
+            | head -n 1)"
+          if [[ -n "$issue_number" ]]; then
+            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" \
+              --body "Der woechentliche Security-Scan ist ohne Befunde und Scannerfehler durchgelaufen. Das Issue wird automatisch geschlossen."
+            gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" --reason completed
