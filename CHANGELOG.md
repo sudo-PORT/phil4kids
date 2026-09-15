@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- DE: Der öffentliche Pull-Request- und Wochen-Security-Lauf verwendet jetzt repo-lokal vendorte,
+  fest gepinnte Gitleaks-, Semgrep- und Trivy-Jobs mit fail-closed Enforcement, statt einen für
+  öffentliche Repositories nicht erreichbaren internen Workflow aufzurufen. Die deduplizierte
+  Issue-Triage läuft nur geplant oder manuell und erhält als einziger Job Schreibrechte.
+- EN: The public pull-request and weekly security runs now use repository-local, pinned Gitleaks,
+  Semgrep, and Trivy jobs with fail-closed enforcement instead of calling an internal workflow
+  that public repositories cannot access. Deduplicated issue triage runs only on schedules or
+  manual dispatches and is the only job with write permission.
 - DE: Der vendorte CRA-/SBOM-Workflow wartet nach dem Upload jetzt fail-closed auf die
   abgeschlossene Dependency-Track-BOM-Verarbeitung und lehnt ungültige Verarbeitungstoken oder
   Statusantworten ab.
