@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- DE: Der vendorte CRA-/SBOM-Workflow wartet nach dem Upload jetzt fail-closed auf die
+  abgeschlossene Dependency-Track-BOM-Verarbeitung und lehnt ungültige Verarbeitungstoken oder
+  Statusantworten ab.
+- EN: The vendored CRA/SBOM workflow now waits fail-closed for Dependency-Track to finish BOM
+  processing after upload and rejects invalid processing tokens or status responses.
+
 ## 2026-08-30 – Eindeutiges Dependency-Track-Projekt
 
 - Der vendorte SBOM-Workflow schreibt alle Branch-, Tag- und Release-Läufe nur
