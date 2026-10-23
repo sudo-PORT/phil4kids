@@ -25,3 +25,19 @@ allein noch kein Betriebsnachweis.
 
 Der bestehende Pages-Workflow betreibt nur den Browser. Server-Abnahme benötigt
 einen tatsächlich laufenden Next.js-Server.
+
+## GitHub Pages
+
+Der bestehende Pages-Workflow veröffentlicht weiterhin den statischen Export.
+`actions/configure-pages@v5` ergänzt `output: export`, den Repository-Basispfad
+und `images.unoptimized` im unverpackten Konfigurationsobjekt. Sentry erhält
+eine eigene Kopie dieses Objekts; sein Ergebnis wird vor dem unverpackten
+Standardexport übernommen. Das vermeidet sowohl einen nicht erkannten Export
+als auch eine rekursive Webpack-Konfigurationsfunktion.
+
+Verifikation: Der tatsächliche Parser aus `actions/configure-pages@v5` lehnte
+den direkt verpackten Export ab. Mit dieser Form injizierte er alle drei
+Pages-Einstellungen. Ein vollständiger Next-Build mit der injizierten
+Konfiguration erzeugte `out/index.html`, `out/musik.html` sowie die bestehenden
+Album- und Artikelrouten. Die Prüfung nutzte ausschließlich eine synthetische
+Projekt-4-DSN und sendete keine Ereignisse.
