@@ -1,0 +1,14 @@
+// Initialize the matching Next.js runtime and report server rendering, action and route errors.
+import type { Instrumentation } from "next";
+
+export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs")
+    await import("./sentry.server.config");
+  if (process.env.NEXT_RUNTIME === "edge") await import("./sentry.edge.config");
+}
+export const onRequestError: Instrumentation.onRequestError = async (
+  ...args
+) => {
+  const Sentry = await import("@sentry/nextjs");
+  return Sentry.captureRequestError(...args);
+};

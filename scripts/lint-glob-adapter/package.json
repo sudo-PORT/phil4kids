@@ -1,0 +1,12 @@
+{
+  "name": "next-eslint-glob-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.mjs",
+  "dependencies": {
+    "tinyglobby": "0.2.17"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}
