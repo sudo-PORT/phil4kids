@@ -1,5 +1,5 @@
-// Initialize server error capture only when this customer's public DSN is configured.
+// Initialize error-only diagnostics with the same customer routing/privacy boundary in every runtime.
 import * as Sentry from "@sentry/nextjs";
-import { sentryOptions } from "./sentry.options";
+import { glitchTipOptions } from "./sentry.options";
 
-Sentry.init(sentryOptions);
+Sentry.init(glitchTipOptions);

@@ -1,12 +1,6 @@
-// Capture browser errors before hydration without Replay, sessions or profiling.
+// Capture browser errors before hydration using the exact customer project and shared privacy boundary.
 import * as Sentry from "@sentry/nextjs";
-import { sentryOptions } from "./sentry.options";
+import { glitchTipOptions } from "./sentry.options";
 
-Sentry.init({
-  ...sentryOptions,
-  integrations: (integrations) =>
-    integrations.filter((integration) => integration.name !== "BrowserSession"),
-  replaysSessionSampleRate: 0,
-  replaysOnErrorSampleRate: 0,
-});
+Sentry.init(glitchTipOptions);
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

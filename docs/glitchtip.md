@@ -1,16 +1,27 @@
 # GlitchTip
 
-Die öffentliche Projekt-DSN wird beim Build über `NEXT_PUBLIC_SENTRY_DSN` gesetzt.
-Ohne DSN bleibt das SDK inaktiv. `NEXT_PUBLIC_SENTRY_ENVIRONMENT` kann die Umgebung benennen.
-Fehler werden in Browser, Node.js und Edge erfasst; Performance, Replay, automatische
-Browser-Sessions und Profiling sind deaktiviert. Request-Bodies, Header, Cookies,
-URL-Abfragen, Benutzerkontext, Extras und Breadcrumbs werden vor dem Versand entfernt.
+Die öffentliche `NEXT_PUBLIC_SENTRY_DSN` muss zur eigenen Instanz
+`https://bug.sudoport.de` und exakt zum Kunden-Web-Projekt `4` gehören.
+Ohne passende DSN bleibt die Erfassung inaktiv.
+Die DSN muss vor dem Browser-Build gesetzt sein; ein Neustart eines alten Builds
+ersetzt keine neue Browser-Konfiguration. Native Apps erhalten ein eigenes Projekt.
 
-`SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` und optional `SENTRY_RELEASE` gehören
-nur in die autorisierte Build-Umgebung. Source Maps werden nur bei vollständiger
-Upload-Konfiguration zu `https://bug.sudoport.de` gesendet. Keine Token in Browser oder Git.
+Browser, Node.js und Edge verwenden dieselbe Grenze vor dem Transport:
+Requests einschließlich Headern, Cookies, Abfragen und Bodies, Benutzer,
+Extras, Kontext, Breadcrumbs, Tags und ursprüngliche Fehlerwerte werden entfernt.
+Fehlertyp, technische Stackpositionen und Event-ID bleiben zur Diagnose erhalten.
+Replay, automatische Sessions, Tracing, Profiling und Logs sind deaktiviert.
 
-Der aktuelle Workflow `.github/workflows/nextjs.yml` exportiert nach GitHub Pages;
-dort ist nur der Browser aktiv. Eine Serverabnahme setzt einen tatsächlich betriebenen
-Next.js-Server voraus. Nach dem Build einen synthetischen Browserfehler im richtigen
-GlitchTip-Projekt nachweisen; dies ist noch kein durchgeführter Betriebsnachweis.
+Optionale Source-Map-Uploads benötigen `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` und
+`SENTRY_PROJECT` ausschließlich in der autorisierten Buildumgebung. Sie senden
+nur an `https://bug.sudoport.de`; Tokens gehören weder in Browser noch Runtime.
+
+`node scripts/test-glitchtip-config.mjs` führt die tatsächliche gemeinsame Grenze
+mit allen drei Konfigurationen aus. Synthetische Formulardaten, falsche Projekt-DSNs
+und fremde Hosts prüfen Bereinigung und Routing ohne Netzwerkverkehr.
+Nach Deployment sind Browser- und Serverfehler aus der tatsächlichen Anwendung
+im richtigen Kundenprojekt nachzuweisen. Die vorbereitete Konfiguration ist
+allein noch kein Betriebsnachweis.
+
+Der bestehende Pages-Workflow betreibt nur den Browser. Server-Abnahme benötigt
+einen tatsächlich laufenden Next.js-Server.
