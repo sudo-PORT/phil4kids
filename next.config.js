@@ -1,5 +1,5 @@
 // Preserve application settings and send optional source maps only to our GlitchTip instance.
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
