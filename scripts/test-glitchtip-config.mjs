@@ -101,7 +101,10 @@ for (const runtime of ["client", "server", "edge"]) {
       const sensitive = "synthetic-sensitive-value";
       const event = {
         type: undefined,
-        event_id: "synthetic-event",
+        arbitraryField: sensitive,
+        logentry: { message: sensitive },
+        threads: [{ name: sensitive }],
+        event_id: "a".repeat(32),
         request: {
           headers: { authorization: sensitive },
           cookies: sensitive,
@@ -123,7 +126,7 @@ for (const runtime of ["client", "server", "edge"]) {
               type: "TypeError",
               value: sensitive,
               mechanism: {
-                type: "generic",
+                type: sensitive,
                 handled: false,
                 data: { customer: sensitive },
               },
@@ -132,7 +135,8 @@ for (const runtime of ["client", "server", "edge"]) {
                   {
                     filename: `https://example.invalid/assets/form.js?token=${sensitive}`,
                     lineno: 42,
-                    function: "submitContact",
+                    function: sensitive,
+                    module: sensitive,
                     vars: { body: sensitive },
                     context_line: sensitive,
                   },
@@ -143,12 +147,22 @@ for (const runtime of ["client", "server", "edge"]) {
         },
       };
       const cleaned = options.beforeSend(event);
-      assert.equal(cleaned.event_id, "synthetic-event");
+      assert.notEqual(cleaned, event);
+      assert.equal(event.arbitraryField, sensitive);
+      assert.equal(cleaned.arbitraryField, undefined);
+      assert.equal(cleaned.logentry, undefined);
+      assert.equal(cleaned.threads, undefined);
+      assert.equal(cleaned.exception.values[0].mechanism.type, "generic");
+      assert.equal(
+        cleaned.exception.values[0].stacktrace.frames[0].module,
+        undefined,
+      );
+      assert.equal(cleaned.event_id, "a".repeat(32));
       assert.equal(cleaned.exception.values[0].type, "TypeError");
       assert.equal(cleaned.exception.values[0].stacktrace.frames[0].lineno, 42);
       assert.equal(
         cleaned.exception.values[0].stacktrace.frames[0].function,
-        "submitContact",
+        undefined,
       );
       assert.equal(
         cleaned.exception.values[0].stacktrace.frames[0].filename,
@@ -175,4 +189,74 @@ for (const runtime of ["client", "server", "edge"]) {
 }
 console.log(
   "PASS: exact customer DSN gating, all-runtime error scrubbing and error-only SDK options.",
+);
+
+// Verify the installed SDK's final envelope with synthetic data and no network transport.
+const installedSdk = await import("@sentry/nextjs");
+const actualSdk = installedSdk.default || installedSdk;
+const actualBoundary = await import(
+  "data:text/javascript;base64," +
+    Buffer.from(source(shared)).toString("base64")
+);
+const envelopes = [];
+actualSdk.init({
+  dsn: `https://${"0".repeat(32)}@bug.sudoport.de/${projectId}`,
+  enabled: true,
+  environment: "test",
+  defaultIntegrations: false,
+  registerEsmLoaderHooks: false,
+  skipOpenTelemetrySetup: true,
+  integrations: [],
+  sendDefaultPii: false,
+  tracesSampleRate: 0,
+  enableLogs: false,
+  beforeSend: actualBoundary.scrubSensitiveTelemetry,
+  transport: () => ({
+    send(envelope) {
+      envelopes.push(envelope);
+      return Promise.resolve({ statusCode: 200 });
+    },
+    flush() {
+      return Promise.resolve(true);
+    },
+  }),
+});
+const privateProbe = "KundenprojektAlphaBesprechung";
+actualSdk.captureEvent({
+  message: privateProbe,
+  arbitraryField: privateProbe,
+  logentry: { message: privateProbe },
+  exception: {
+    values: [
+      {
+        type: "TypeError",
+        value: privateProbe,
+        mechanism: { type: privateProbe, handled: true },
+        stacktrace: {
+          frames: [
+            {
+              filename:
+                "/.next/server/chunks/[root-of-the-server]__abc.mjs?memo=" +
+                privateProbe,
+              function: privateProbe,
+              module: privateProbe,
+              lineno: 42,
+            },
+          ],
+        },
+      },
+    ],
+  },
+});
+await actualSdk.flush(1000);
+assert.equal(envelopes.length, 1);
+assert.ok(!JSON.stringify(envelopes).includes(privateProbe));
+const sentError = envelopes[0][1].find(
+  ([header]) => header.type === "event",
+)[1];
+assert.equal(sentError.exception.values[0].type, "TypeError");
+assert.equal(sentError.exception.values[0].stacktrace.frames[0].lineno, 42);
+await actualSdk.close(1000);
+console.log(
+  "PASS: installed SDK final envelope uses positive technical fields and memory transport only.",
 );

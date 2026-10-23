@@ -20,52 +20,96 @@ export function validGlitchTipDsn(value: string | undefined) {
   }
 }
 
-export function scrubSensitiveTelemetry(event: ErrorEvent) {
-  for (const field of [
-    "request",
-    "user",
-    "extra",
-    "contexts",
-    "breadcrumbs",
-    "transaction",
-    "server_name",
-    "fingerprint",
-    "tags",
-  ] as const)
-    delete event[field];
-  if (event.message) event.message = "Unerwarteter Anwendungsfehler";
-  if (event.exception?.values)
-    event.exception.values = event.exception.values.map((value) => ({
-      type:
-        typeof value.type === "string" &&
-        /^[A-Za-z_$][A-Za-z0-9_.$:-]{0,127}$/.test(value.type)
-          ? value.type
-          : "Error",
-      value: "Unerwarteter Anwendungsfehler",
-      stacktrace: value.stacktrace
-        ? {
-            frames: (value.stacktrace.frames || []).map((frame) => ({
-              filename:
-                typeof frame.filename === "string"
-                  ? frame.filename.split(/[?#]/)[0]
-                  : undefined,
-              abs_path:
-                typeof frame.abs_path === "string"
-                  ? frame.abs_path.split(/[?#]/)[0]
-                  : undefined,
-              function: frame.function,
-              module: frame.module,
-              lineno: frame.lineno,
-              colno: frame.colno,
-              in_app: frame.in_app,
-            })),
-          }
-        : undefined,
-      mechanism: value.mechanism
-        ? { type: value.mechanism.type, handled: value.mechanism.handled }
-        : undefined,
-    }));
-  return event;
+type TechnicalException = NonNullable<
+  NonNullable<ErrorEvent["exception"]>["values"]
+>[number];
+type TechnicalFrame = NonNullable<
+  NonNullable<TechnicalException["stacktrace"]>["frames"]
+>[number];
+
+function technicalLocation(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const location = value.split(/[?#]/, 1)[0] ?? "";
+  return /^[A-Za-z0-9_./:@+%()[\]-]{1,512}$/.test(location)
+    ? location
+    : undefined;
+}
+
+// Construct a positive schema: new SDK/application fields never enter transport implicitly.
+export function scrubSensitiveTelemetry(event: ErrorEvent): ErrorEvent | null {
+  if (!event || typeof event !== "object" || event.type) return null;
+  const clean: ErrorEvent = { type: undefined };
+  if (
+    typeof event.event_id === "string" &&
+    /^[a-f0-9]{32}$/i.test(event.event_id)
+  )
+    clean.event_id = event.event_id;
+  if (typeof event.timestamp === "number" && Number.isFinite(event.timestamp))
+    clean.timestamp = event.timestamp;
+  if (
+    typeof event.level === "string" &&
+    ["error", "fatal", "warning"].includes(event.level)
+  )
+    clean.level = event.level;
+  if (
+    typeof event.environment === "string" &&
+    ["production", "staging", "development", "test"].includes(event.environment)
+  )
+    clean.environment = event.environment;
+  if (
+    typeof event.release === "string" &&
+    /^[a-f0-9]{40}$/i.test(event.release)
+  )
+    clean.release = event.release;
+  if (
+    typeof event.platform === "string" &&
+    ["javascript", "node", "nodejs"].includes(event.platform)
+  )
+    clean.platform = event.platform;
+  if (event.message) clean.message = "Unerwarteter Anwendungsfehler";
+  if (Array.isArray(event.exception?.values)) {
+    clean.exception = {
+      values: event.exception.values.slice(0, 20).map((value) => {
+        const error: TechnicalException = {
+          type:
+            typeof value?.type === "string" &&
+            /^[A-Za-z_$][A-Za-z0-9_.$:-]{0,127}$/.test(value.type)
+              ? value.type
+              : "Error",
+          value: "Unerwarteter Anwendungsfehler",
+        };
+        if (Array.isArray(value?.stacktrace?.frames)) {
+          error.stacktrace = {
+            frames: value.stacktrace.frames.slice(-200).map((frame) => {
+              const result: TechnicalFrame = {};
+              for (const key of ["filename", "abs_path"] as const) {
+                const location = technicalLocation(frame?.[key]);
+                if (location) result[key] = location;
+              }
+              for (const key of ["lineno", "colno"] as const) {
+                if (
+                  typeof frame?.[key] === "number" &&
+                  Number.isSafeInteger(frame?.[key]) &&
+                  frame[key] >= 0
+                )
+                  result[key] = frame[key];
+              }
+              if (typeof frame?.in_app === "boolean")
+                result.in_app = frame.in_app;
+              return result;
+            }),
+          };
+        }
+        if (value?.mechanism)
+          error.mechanism = {
+            type: "generic",
+            handled: value.mechanism.handled === true,
+          };
+        return error;
+      }),
+    };
+  }
+  return clean;
 }
 
 const configuredDsn = process.env.NEXT_PUBLIC_SENTRY_DSN;

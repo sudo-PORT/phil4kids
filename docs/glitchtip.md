@@ -41,3 +41,13 @@ Pages-Einstellungen. Ein vollständiger Next-Build mit der injizierten
 Konfiguration erzeugte `out/index.html`, `out/musik.html` sowie die bestehenden
 Album- und Artikelrouten. Die Prüfung nutzte ausschließlich eine synthetische
 Projekt-4-DSN und sendete keine Ereignisse.
+
+## Positive technische Fehlerfeldliste
+
+Ein neues Eventobjekt übernimmt ausschließlich validierte technische Fehlerfelder.
+Unbekannte Event-/SDK-Felder und freie Funktions-/Modulwerte werden verworfen;
+Fehlerwerte und Mechanismusbezeichnung sind generisch. Typ sowie begrenzte
+Datei-/Zeilenpositionen bleiben erhalten. Der ursprüngliche Event bleibt unverändert.
+Die All-Runtime-Negativprobe enthält zusätzlich unbekannte Felder sowie freie
+Kundentexte in Stack-Metadaten. Routing, SDK-Version und Build-/Releaseweg bleiben
+unverändert. Erst der neue qualifizierte Main-Release macht diese Korrektur live.
